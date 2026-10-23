@@ -33,6 +33,14 @@ PORT = int(os.environ.get("CALEX_PORT", "8765"))
 # Tuya product categories that are lights. Anything else is treated as a plain switch/plug.
 LIGHT_CATEGORIES = {"dj", "dd", "xdd", "fwd", "dc", "tyndj", "fsd"}
 
+# Tuya function codes (from the wizard's per-device "mapping") -> tinytuya bulb features.
+FEATURE_CODES = {
+    "switch_led": "switch", "work_mode": "mode",
+    "bright_value": "brightness", "bright_value_v2": "brightness",
+    "temp_value": "colourtemp", "temp_value_v2": "colourtemp",
+    "colour_data": "colour", "colour_data_v2": "colour",
+}
+
 
 class Light:
     def __init__(self, info, ip):
@@ -46,6 +54,24 @@ class Light:
         self.dev = cls(self.id, ip or "Auto", info["key"], version=version,
                        connection_timeout=3, connection_retry_limit=1, connection_retry_delay=1)
         self.switch_dp = self._find_switch_dp(info)
+        self.features = {FEATURE_CODES[m["code"]]: str(dp)
+                         for dp, m in (info.get("mapping") or {}).items() if m.get("code") in FEATURE_CODES}
+        self.features_applied = False
+
+    def _apply_features(self, status):
+        """tinytuya only enables features whose data points appear in a status
+        reply, and some bulbs leave out colour while in white mode. Fill the
+        gaps from the device's Tuya mapping."""
+        if self.features_applied or not self.dev.bulb_configured:
+            return
+        self.features_applied = True
+        for feature, dp in self.features.items():
+            if not self.dev.dpset.get(feature):
+                self.dev.dpset[feature] = dp
+                setattr(self.dev, "has_" + feature, True)
+        print("%s: type %s, dps %s, features %s" % (
+            self.name, self.dev.bulb_type, sorted((status or {}).get("dps", {})),
+            {k: v for k, v in self.dev.dpset.items() if v and not k.startswith("value_")}))
 
     @staticmethod
     def _find_switch_dp(info):
@@ -60,6 +86,8 @@ class Light:
             if not status or "Error" in status:
                 return {"online": False, "error": (status or {}).get("Error", "no response")}
             out = {"online": True}
+            if self.is_bulb:
+                self._apply_features(status)
             if self.is_bulb and self.dev.bulb_configured:
                 s = self.dev.state()
                 out["on"] = bool(s.get("is_on"))
@@ -70,7 +98,7 @@ class Light:
                     out["brightness"] = round(self.dev.get_brightness_percentage())
                 if caps["colourtemp"]:
                     out["colourtemp"] = round(self.dev.get_colourtemp_percentage())
-                if caps["colour"]:
+                if caps["colour"] and status.get("dps", {}).get(self.dev.dpset["colour"]):
                     r, g, b = self.dev.colour_rgb()
                     out["colour"] = "#%02x%02x%02x" % (int(r), int(g), int(b))
             else:
@@ -89,7 +117,7 @@ class Light:
             if not self.is_bulb:
                 return
             if not d.bulb_configured:
-                d.status()
+                self._apply_features(d.status())
             if "colour" in body:
                 h = body["colour"].lstrip("#")
                 d.set_colour(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
