@@ -44,7 +44,9 @@ jobs:
           $p = Start-Process dist/CalexLights.exe -ArgumentList '--no-tray','--no-browser' -PassThru
           Start-Sleep 20
           $html = (Invoke-WebRequest http://localhost:8765/ -UseBasicParsing).Content
-          Stop-Process $p.Id
+          # The one-file exe runs as a launcher plus a child process, so stop both.
+          Get-Process CalexLights -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
           if ($html -notmatch 'Calex Lights') { throw 'UI did not load' }
 
       - name: Smoke test (tray mode)
@@ -54,7 +56,7 @@ jobs:
           Start-Sleep 20
           $api = (Invoke-WebRequest http://localhost:8765/api/devices -UseBasicParsing).Content
           $alive = -not $p.HasExited
-          Stop-Process $p.Id -ErrorAction SilentlyContinue
+          Get-Process CalexLights -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep 2
           $log = Get-Content dist/calex-lights.log -Raw -ErrorAction SilentlyContinue
           Write-Output $log
