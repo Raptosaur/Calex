@@ -1,14 +1,16 @@
-"""Calex Lights - a tiny local web app for controlling Calex (Tuya) smart lights.
+"""Calex Lights - a tiny local app for controlling Calex (Tuya) smart lights.
 
 Calex Smart is a rebranded Tuya app, so the lights speak the Tuya local
-protocol. This server talks to them directly over your LAN with tinytuya and
-serves a web UI at http://localhost:8765.
+protocol. This talks to them directly over your LAN with tinytuya, sits in the
+system tray with a quick-control popup (tray.py), and serves a full web control
+panel at http://localhost:8765. Pass --no-tray to run just the web server.
 
 Needs a devices.json next to this file; if missing, the tinytuya setup wizard runs first.
 """
 
 import json
 import os
+import urllib.request
 import re
 import sys
 import threading
@@ -23,6 +25,7 @@ FROZEN = getattr(sys, "frozen", False)
 HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
 BUNDLE = getattr(sys, "_MEIPASS", HERE)
 DEVICES_FILE = os.path.join(HERE, "devices.json")
+LOG_FILE = os.path.join(HERE, "calex-lights.log")
 INDEX_FILE = os.path.join(BUNDLE, "index.html")
 HOST = os.environ.get("CALEX_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CALEX_PORT", "8765"))
@@ -103,10 +106,6 @@ def clamp(v):
 
 
 def load_lights():
-    if not os.path.exists(DEVICES_FILE):
-        run_wizard()
-    if not os.path.exists(DEVICES_FILE):
-        sys.exit("devices.json not found - setup wizard did not finish (see README).")
     with open(DEVICES_FILE, encoding="utf-8") as f:
         infos = [i for i in json.load(f) if i.get("key") and not i.get("sub")]
 
@@ -129,12 +128,34 @@ def load_lights():
 
 
 def run_wizard():
-    from tinytuya import wizard
-    print("No devices.json yet - running the one-time Tuya setup wizard. See README.md for the keys it asks for.\n")
-    wizard.wizard(color=False)
+    # The windowed exe has no console, so borrow one for the wizard's questions.
+    borrowed = sys.platform == "win32" and sys.stdin is None
+    if borrowed:
+        import ctypes
+        ctypes.windll.kernel32.AllocConsole()
+        saved = sys.stdin, sys.stdout, sys.stderr
+        sys.stdin = open("CONIN$", "r")
+        sys.stdout = sys.stderr = open("CONOUT$", "w")
+    try:
+        from tinytuya import wizard
+        print("No devices.json yet - running the one-time Tuya setup wizard. See README.md for the keys it asks for.\n")
+        wizard.wizard(color=False)
+        if borrowed:
+            input("\nSetup done. Press Enter to start Calex Lights in the system tray...")
+    finally:
+        if borrowed:
+            sys.stdin.close()
+            sys.stdout.close()
+            sys.stdin, sys.stdout, sys.stderr = saved
+            ctypes.windll.kernel32.FreeConsole()
 
 
 LIGHTS = {}
+
+
+class Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second copy bind the same port, so don't use it there.
+    allow_reuse_address = os.name != "nt"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -184,38 +205,78 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"online": False, "error": str(e)}, 500)
 
 
+def already_running(url):
+    try:
+        with urllib.request.urlopen(url + "/api/devices", timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 def main():
     os.chdir(HERE)  # the tinytuya wizard reads/writes its files in the current dir
-    if "--wizard" in sys.argv:
-        run_wizard()
-    LIGHTS.update(load_lights())
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
     url = "http://localhost:%d" % PORT
-    print("\nCalex Lights running at %s  (Ctrl+C to stop)" % url)
-    if "--no-browser" not in sys.argv:
-        threading.Timer(0.5, webbrowser.open, [url]).start()
-    try:
+    if already_running(url):
+        webbrowser.open(url)
+        return
+    if "--wizard" in sys.argv or not os.path.exists(DEVICES_FILE):
+        run_wizard()
+    if not os.path.exists(DEVICES_FILE):
+        sys.exit("devices.json not found - setup wizard did not finish (see README).")
+    server = Server((HOST, PORT), Handler)
+
+    if "--no-tray" in sys.argv:
+        LIGHTS.update(load_lights())
+        print("\nCalex Lights running at %s  (Ctrl+C to stop)" % url)
+        if "--no-browser" not in sys.argv:
+            threading.Timer(0.5, webbrowser.open, [url]).start()
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        return
+
+    import tray
+    app = tray.TrayApp(LIGHTS, url)
+
+    def load():
+        try:
+            LIGHTS.update(load_lights())
+        except Exception as e:
+            msg = "Couldn't load devices.json:\n%s" % e
+            print(msg)
+            app.call(lambda: app.placeholder.config(text=msg))
+        else:
+            app.call(app.set_lights_loaded)
         server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+    threading.Thread(target=load, daemon=True).start()
+    app.run()
 
 
 def run():
-    # Double-clicked exes close their window on exit, so pause to let people read errors.
+    # The windowed exe has no stdout; keep a log next to it instead.
+    if sys.stdout is None:
+        sys.stdout = sys.stderr = open(LOG_FILE, "w", encoding="utf-8", buffering=1)
     try:
         main()
     except SystemExit as e:
         if FROZEN and e.code not in (None, 0):
-            print(e.code)
-            input("\nPress Enter to close...")
+            show_error(str(e.code))
         raise
     except Exception:
         if not FROZEN:
             raise
         import traceback
         traceback.print_exc()
-        input("\nPress Enter to close...")
+        show_error("Calex Lights crashed:\n\n%s\nDetails are in %s" % (traceback.format_exc(limit=1), LOG_FILE))
         sys.exit(1)
+
+
+def show_error(message):
+    print(message)
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, "Calex Lights", 0x10)
 
 
 if __name__ == "__main__":

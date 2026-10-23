@@ -25,23 +25,43 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Make icon
+        run: python -c "import tray; tray.make_icon(256).save('icon.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])"
+
       - name: Build CalexLights.exe
         run: >
-          pyinstaller --onefile --console --name CalexLights
+          pyinstaller --onefile --windowed --name CalexLights --icon icon.ico
           --add-data "index.html;."
+          --hidden-import tray
           --collect-submodules tinytuya
+          --collect-submodules pystray
           server.py
 
-      - name: Smoke test
+      - name: Smoke test (web server only)
         shell: pwsh
         run: |
           '[]' | Set-Content dist/devices.json
-          $p = Start-Process dist/CalexLights.exe -ArgumentList '--no-browser' -PassThru
+          $p = Start-Process dist/CalexLights.exe -ArgumentList '--no-tray','--no-browser' -PassThru
           Start-Sleep 20
           $html = (Invoke-WebRequest http://localhost:8765/ -UseBasicParsing).Content
           Stop-Process $p.Id
-          Remove-Item dist/devices.json
           if ($html -notmatch 'Calex Lights') { throw 'UI did not load' }
+
+      - name: Smoke test (tray mode)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist/CalexLights.exe -PassThru
+          Start-Sleep 20
+          $api = (Invoke-WebRequest http://localhost:8765/api/devices -UseBasicParsing).Content
+          $alive = -not $p.HasExited
+          Stop-Process $p.Id -ErrorAction SilentlyContinue
+          Start-Sleep 2
+          $log = Get-Content dist/calex-lights.log -Raw -ErrorAction SilentlyContinue
+          Write-Output $log
+          Remove-Item dist/devices.json, dist/calex-lights.log -ErrorAction SilentlyContinue
+          if (-not $alive) { throw 'Tray app exited early' }
+          if ($api -ne '[]') { throw "Unexpected API response: $api" }
+          if ($log -match 'Traceback') { throw 'Tray app logged an error' }
 
       - uses: actions/upload-artifact@v4
         with:

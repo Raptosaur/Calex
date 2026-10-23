@@ -6,5 +6,9 @@ where python >nul 2>nul || (
   pause & exit /b 1
 )
 python -m pip install --quiet --disable-pip-version-check -r requirements.txt
-python server.py %*
-pause
+if not exist devices.json (
+  python -m tinytuya wizard
+  if not exist devices.json pause & exit /b 1
+)
+rem pythonw runs without a console window; the app lives in the system tray.
+start "" pythonw server.py %*

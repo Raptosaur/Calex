@@ -3,3 +3,8 @@ tuya-raw.json
 tinytuya.json
 snapshot.json
 __pycache__/
+calex-lights.log
+icon.ico
+build/
+dist/
+*.spec

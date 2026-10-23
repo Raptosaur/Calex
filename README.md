@@ -1,6 +1,10 @@
 # Calex Lights for Windows
 
-A small web app for controlling Calex smart lights from your PC. It runs locally and opens in your browser at `http://localhost:8765`. It controls on/off, brightness, warm/cool white and colour for every light, and has "All on" and "All off" buttons.
+A small app for controlling Calex smart lights from your Windows PC. It sits in the **system tray**:
+
+- **Left-click the bulb icon** for a quick popup with an on/off switch and a brightness slider for every light, plus All on / All off.
+- **"Open control panel"** (in the popup or the right-click menu) opens the full web panel at `http://localhost:8765`, with colour and warm/cool white controls.
+- **Right-click the icon** for All on / All off, **Start with Windows** and Quit.
 
 The Calex Smart app is a rebranded **Tuya** app. This app skips the phone app and the cloud and talks to the lights directly over your Wi‑Fi using [tinytuya](https://github.com/jasonacox/tinytuya). Your PC has to be on the same network as the lights.
 
@@ -28,7 +32,9 @@ To talk to each light, the app needs that light's *local key*. Tuya only gives t
 
 ## Everyday use
 
-Double-click **`CalexLights.exe`** (or `start.bat`). Your browser opens with all your lights. Close the black window to stop the app.
+Double-click **`CalexLights.exe`** (or `start.bat`). A bulb icon appears in the system tray; click it to control your lights. If you can't see it, click the **^** arrow in the taskbar and drag the icon out so it's always visible. Tick **Start with Windows** in the right-click menu so it's always there. Quit from the right-click menu.
+
+Running the app again while it's already running just opens the control panel.
 
 If you add a new light or re-pair an existing one, its key changes. Delete `devices.json` and start the app again to re-run the wizard.
 
@@ -45,6 +51,7 @@ Windows SmartScreen may warn about an unsigned exe. Click **More info → Run an
 
 ## Troubleshooting
 
+- **Something went wrong and nothing appears:** check `calex-lights.log` next to the exe.
 - **A light shows "Offline":** check that the PC and the light are on the same network or router. If Windows Firewall asks, allow CalexLights (or Python) on **private networks**, because the app finds lights with UDP broadcasts (ports 6666, 6667 and 7000).
 - **Wrong or old key errors:** the light was re-paired after you ran the wizard. Re-run the wizard as described above.
 - **The Tuya developer trial "expired":** the cloud project is only needed to fetch keys. Local control keeps working after it expires.
